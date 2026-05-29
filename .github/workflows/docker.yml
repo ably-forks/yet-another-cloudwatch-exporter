@@ -1,0 +1,72 @@
+# Fork-specific: build a multi-arch image and push it to this fork's
+# GitHub Packages (ghcr.io/ably-forks/...). Independent of the upstream
+# promu/promci publish jobs in ci.yml.
+name: Docker (fork)
+
+on:
+  push:
+    branches:
+      - master
+      - build-docker-images
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and push multi-arch image
+    runs-on: ubuntu-latest
+    # Only run on the fork, never if this workflow ends up upstream.
+    if: github.repository_owner == 'ably-forks'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: ./Dockerfile.multiarch
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+            BRANCH=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
